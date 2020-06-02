@@ -5,7 +5,8 @@ import (
 	"math/rand"
 	"time"
 
-	hnsw "github.com/Bithack/go-hnsw"
+	hnsw "go-hnsw"
+	"gonum.org/v1/gonum/mat"
 )
 
 func main() {
@@ -17,9 +18,15 @@ func main() {
 		K              = 10
 	)
 
-	var zero hnsw.Point = make([]float32, 128)
+	//var zero hnsw.Point = make([]float32, 128)
+	zero := mat.NewVecDense(128, nil)
+	
+	h, err := hnsw.New(M, efConstruction, zero, "l2")
 
-	h := hnsw.New(M, efConstruction, zero)
+	if (err!=nil) {
+		panic(err)
+	}
+	
 	h.Grow(10000)
 
 	for i := 1; i <= 10000; i++ {
@@ -30,7 +37,7 @@ func main() {
 	}
 
 	fmt.Printf("Generating queries and calculating true answers using bruteforce search...\n")
-	queries := make([]hnsw.Point, 1000)
+	queries := make([]*mat.VecDense, 1000)
 	truth := make([][]uint32, 1000)
 	for i := range queries {
 		queries[i] = randomPoint()
@@ -63,10 +70,10 @@ func main() {
 
 }
 
-func randomPoint() hnsw.Point {
-	var v hnsw.Point = make([]float32, 128)
-	for i := range v {
-		v[i] = rand.Float32()
+func randomPoint() *mat.VecDense {
+	v := mat.NewVecDense(128, nil)
+	for i := 0; i < 128; i++ {
+		v.SetVec(i, rand.Float64())
 	}
 	return v
 }

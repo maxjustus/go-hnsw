@@ -10,14 +10,14 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
+	"gonum.org/v1/gonum/mat"
 	"github.com/stretchr/testify/assert"
 )
 
 var prefix = "siftsmall/siftsmall"
 var dataSize = 10000
 var efSearch = []int{1, 2, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 300, 400}
-var queries []Point
+var queries []*mat.VecDense
 var truth [][]uint32
 
 func TestMain(m *testing.M) {
@@ -51,9 +51,8 @@ func TestSIFT(t *testing.T) {
 
 func buildIndex() *Hnsw {
 	// BUILD INDEX
-	var p Point
-	p = make([]float32, 128)
-	h := New(4, 200, p)
+	point := mat.NewVecDense(128, make([]float64, 128))
+	h,_ := New(4, 200, point, "l2")
 	h.DelaunayType = 1
 	h.Grow(dataSize)
 
@@ -88,7 +87,7 @@ func testSearch(h *Hnsw) {
 }
 
 type job struct {
-	p  Point
+	p  *mat.VecDense
 	id uint32
 }
 
@@ -110,7 +109,7 @@ func buildFromChan(h *Hnsw, points chan job) {
 	wg.Wait()
 }
 
-func search(h *Hnsw, queries []Point, truth [][]uint32, efSearch int) float64 {
+func search(h *Hnsw, queries []*mat.VecDense, truth [][]uint32, efSearch int) float64 {
 	var p int32
 	var wg sync.WaitGroup
 	l := runtime.NumCPU()
@@ -118,7 +117,7 @@ func search(h *Hnsw, queries []Point, truth [][]uint32, efSearch int) float64 {
 
 	for i := 0; i < runtime.NumCPU(); i++ {
 		wg.Add(1)
-		go func(queries []Point, truth [][]uint32) {
+		go func(queries []*mat.VecDense, truth [][]uint32) {
 			for j := range queries {
 				results := h.Search(queries[j], efSearch, 10)
 				// calc 10-NN precision
@@ -141,10 +140,10 @@ func search(h *Hnsw, queries []Point, truth [][]uint32, efSearch int) float64 {
 	return (float64(p) / float64(10*b*l))
 }
 
-func readFloat32(f *os.File) (float32, error) {
+func testReadFloat64(f *os.File) (float64, error) {
 	bs := make([]byte, 4)
 	_, err := f.Read(bs)
-	return float32(math.Float32frombits(binary.LittleEndian.Uint32(bs))), err
+	return float64(math.Float32frombits(binary.LittleEndian.Uint32(bs))), err
 }
 
 func readUint32(f *os.File) (uint32, error) {
@@ -153,13 +152,13 @@ func readUint32(f *os.File) (uint32, error) {
 	return binary.LittleEndian.Uint32(bs), err
 }
 
-func loadQueriesFromFvec(prefix string) (queries []Point, truth [][]uint32) {
+func loadQueriesFromFvec(prefix string) (queries []*mat.VecDense, truth [][]uint32) {
 	f2, err := os.Open(prefix + "_query.fvecs")
 	if err != nil {
 		panic("couldn't open query data file")
 	}
 	defer f2.Close()
-	queries = make([]Point, 10000)
+	queries = make([]*mat.VecDense, 10000)
 	qcount := 0
 	for {
 		d, err := readUint32(f2)
@@ -169,9 +168,12 @@ func loadQueriesFromFvec(prefix string) (queries []Point, truth [][]uint32) {
 		if d != 128 {
 			panic("Wrong dimension for this test...")
 		}
-		queries[qcount] = make([]float32, 128)
+
+		vecDense := mat.NewVecDense(128, make([]float64, 128))
+		queries[qcount] = vecDense
 		for i := 0; i < int(d); i++ {
-			queries[qcount][i], err = readFloat32(f2)
+			newFloat,_ := testReadFloat64(f2)
+			queries[qcount].SetVec(i, newFloat)
 		}
 		qcount++
 	}
@@ -225,10 +227,10 @@ func loadDataFromFvec(prefix string, points chan job) {
 		if d != 128 {
 			panic("Wrong dimension for this test...")
 		}
-		var vec Point
-		vec = make([]float32, 128)
+		vec := mat.NewVecDense(128, make([]float64, 128))
 		for i := 0; i < int(d); i++ {
-			vec[i], err = readFloat32(f)
+			readValue, _ := testReadFloat64(f) 
+			vec.SetVec(i, readValue)
 		}
 		points <- job{p: vec, id: uint32(count)}
 		count++

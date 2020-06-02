@@ -2,6 +2,11 @@
 
 go-hnsw is a GO implementation of the HNSW approximate nearest-neighbour search algorithm implemented in C++ in https://github.com/searchivarius/nmslib and described in https://arxiv.org/abs/1603.09320
 
+NOTE: This version extends over the original one on the following:
+ - Uses gonum/mat dense vectors to represent elements in the tree. No longer support for float32.
+ - Also uses gonum BLAS functions. Available functions are Cosine and L2Squared
+ - The HNSW object now support both Cosine and L2Squared metrics.
+ 
 ## Usage
 
 Simple usage example. See examples folder for more.
@@ -16,7 +21,8 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/Bithack/go-hnsw"
+	hnsw "github.com/tavoaqp/go-hnsw"
+	"gonum.org/v1/gonum/mat"
 )
 
 func main() {
@@ -28,9 +34,9 @@ func main() {
 		K              = 10
 	)
 
-	var zero hnsw.Point = make([]float32, 128)
-
-	h := hnsw.New(M, efConstruction, zero)
+	zero := mat.NewVecDense(128, nil)
+	
+	h := hnsw.New(M, efConstruction, zero, "l2")
 	h.Grow(10000)
 
     // Note that added ID:s must start from 1
@@ -50,10 +56,10 @@ func main() {
 	fmt.Printf("%v queries / second (single thread)\n", 1000.0/stop.Seconds())	
 }
 
-func randomPoint() hnsw.Point {
-	var v hnsw.Point = make([]float32, 128)
-	for i := range v {
-		v[i] = rand.Float32()
+func randomPoint() *mat.VecDense {
+	v := mat.NewVecDense(128, nil)
+	for i := 0; i < 128; i++ {
+		v.SetVec(i, rand.Float64())
 	}
 	return v
 }

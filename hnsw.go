@@ -10,22 +10,22 @@ import (
 	"os"
 	"sync"
 	"time"
-
-	"github.com/Bithack/go-hnsw/bitsetpool"
-	"github.com/Bithack/go-hnsw/distqueue"
-	"github.com/Bithack/go-hnsw/f32"
+	"errors"
+	"go-hnsw/bitsetpool"
+	"go-hnsw/distqueue"
+	"go-hnsw/distances"
+	"gonum.org/v1/gonum/mat"
 )
 
-type Point []float32
-
-func (a Point) Size() int {
-	return len(a) * 4
-}
+const(
+	CosineDist = 1
+	L2SquaredDist = 2
+)
 
 type node struct {
 	sync.RWMutex
 	locked  bool
-	p       Point
+	point   *mat.VecDense
 	level   int
 	friends [][]uint32
 }
@@ -38,8 +38,9 @@ type Hnsw struct {
 	linkMode       int
 	DelaunayType   int
 
-	DistFunc func([]float32, []float32) float32
-
+	DistFunc func(*mat.VecDense, *mat.VecDense) float64
+	DistType int
+	
 	nodes []node
 
 	bitset *bitsetpool.BitsetPool
@@ -51,51 +52,60 @@ type Hnsw struct {
 
 // Load opens a index file previously written by Save(). Returnes a new index and the timestamp the file was written
 func Load(filename string) (*Hnsw, int64, error) {
-	f, err := os.Open(filename)
+	file, err := os.Open(filename)
 	if err != nil {
 		return nil, 0, err
 	}
-	z, err := gzip.NewReader(f)
+	reader, err := gzip.NewReader(file)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	timestamp := readInt64(z)
+	timestamp := readInt64(reader)
 
 	h := new(Hnsw)
-	h.M = readInt32(z)
-	h.M0 = readInt32(z)
-	h.efConstruction = readInt32(z)
-	h.linkMode = readInt32(z)
-	h.DelaunayType = readInt32(z)
-	h.LevelMult = readFloat64(z)
-	h.maxLayer = readInt32(z)
-	h.enterpoint = uint32(readInt32(z))
+	h.M = readInt32(reader)
+	h.M0 = readInt32(reader)
+	h.efConstruction = readInt32(reader)
+	h.linkMode = readInt32(reader)
+	h.DelaunayType = readInt32(reader)
+	h.LevelMult = readFloat64(reader)
+	h.maxLayer = readInt32(reader)
+	h.enterpoint = uint32(readInt32(reader))
+	h.DistType = readInt32(reader)
 
-	h.DistFunc = f32.L2Squared8AVX
+	switch h.DistType {
+	case CosineDist:
+		h.DistFunc = distances.Cosine
+	case L2SquaredDist:
+		h.DistFunc = distances.L2Squared
+	}
+
 	h.bitset = bitsetpool.New()
 
-	l := readInt32(z)
-	h.nodes = make([]node, l)
+	lenNodes := readInt32(reader)
+	h.nodes = make([]node, lenNodes)
 
 	for i := range h.nodes {
 
-		l := readInt32(z)
-		h.nodes[i].p = make([]float32, l)
+		var newVec mat.VecDense
+		_ , err := newVec.UnmarshalBinaryFrom(reader)
 
-		err = binary.Read(z, binary.LittleEndian, h.nodes[i].p)
-		if err != nil {
+		if (err!=nil) {
 			panic(err)
 		}
-		h.nodes[i].level = readInt32(z)
+		
+		h.nodes[i].point = &newVec
+		
+		h.nodes[i].level = readInt32(reader)
 
-		l = readInt32(z)
-		h.nodes[i].friends = make([][]uint32, l)
+		numFriends := readInt32(reader)
+		h.nodes[i].friends = make([][]uint32, numFriends)
 
 		for j := range h.nodes[i].friends {
-			l := readInt32(z)
-			h.nodes[i].friends[j] = make([]uint32, l)
-			err = binary.Read(z, binary.LittleEndian, h.nodes[i].friends[j])
+			friends := readInt32(reader)
+			h.nodes[i].friends[j] = make([]uint32, friends)
+			err = binary.Read(reader, binary.LittleEndian, h.nodes[i].friends[j])
 			if err != nil {
 				panic(err)
 			}
@@ -103,62 +113,65 @@ func Load(filename string) (*Hnsw, int64, error) {
 
 	}
 
-	z.Close()
-	f.Close()
+	reader.Close()
+	file.Close()
 
 	return h, timestamp, nil
 }
 
 // Save writes to current index to a gzipped binary data file
 func (h *Hnsw) Save(filename string) error {
-	f, err := os.Create(filename)
+	file, err := os.Create(filename)
 	if err != nil {
 		return err
 	}
-	z := gzip.NewWriter(f)
+	writer := gzip.NewWriter(file)
 
 	timestamp := time.Now().Unix()
 
-	writeInt64(timestamp, z)
+	writeInt64(timestamp, writer)
 
-	writeInt32(h.M, z)
-	writeInt32(h.M0, z)
-	writeInt32(h.efConstruction, z)
-	writeInt32(h.linkMode, z)
-	writeInt32(h.DelaunayType, z)
-	writeFloat64(h.LevelMult, z)
-	writeInt32(h.maxLayer, z)
-	writeInt32(int(h.enterpoint), z)
-
-	l := len(h.nodes)
-	writeInt32(l, z)
+	writeInt32(h.M, writer)
+	writeInt32(h.M0, writer)
+	writeInt32(h.efConstruction, writer)
+	writeInt32(h.linkMode, writer)
+	writeInt32(h.DelaunayType, writer)
+	writeFloat64(h.LevelMult, writer)
+	writeInt32(h.maxLayer, writer)
+	writeInt32(int(h.enterpoint), writer)
+	writeInt32(h.DistType, writer)
+	
+	lenNodes := len(h.nodes)
+	writeInt32(lenNodes, writer)
 
 	if err != nil {
 		return err
 	}
 	for _, n := range h.nodes {
-		l := len(n.p)
-		writeInt32(l, z)
-		err = binary.Write(z, binary.LittleEndian, []float32(n.p))
+
+		//writeInt32(n.point.Len(), writer)
+			
+		_ , err = n.point.MarshalBinaryTo(writer)
+		
 		if err != nil {
 			panic(err)
 		}
-		writeInt32(n.level, z)
+		writeInt32(n.level, writer)
 
-		l = len(n.friends)
-		writeInt32(l, z)
-		for _, f := range n.friends {
-			l := len(f)
-			writeInt32(l, z)
-			err = binary.Write(z, binary.LittleEndian, f)
+		numFriends := len(n.friends)
+		writeInt32(numFriends, writer)
+		for _, friend := range n.friends {
+			lenFriend := len(friend)
+			writeInt32(lenFriend, writer)
+			err = binary.Write(writer, binary.LittleEndian, friend)
 			if err != nil {
 				panic(err)
 			}
 		}
 	}
 
-	z.Close()
-	f.Close()
+	writer.Close()
+	file.Close()
 
 	return nil
 }
@@ -256,7 +269,7 @@ func (h *Hnsw) Link(first, second uint32, level int) {
 			resultSet := &distqueue.DistQueueClosestLast{Size: len(node.friends[level])}
 
 			for _, n := range node.friends[level] {
-				resultSet.Push(n, h.DistFunc(node.p, h.nodes[n].p))
+				resultSet.Push(n, h.DistFunc(node.point, h.nodes[n].point))
 			}
 			for resultSet.Len() > maxL {
 				resultSet.Pop()
@@ -273,7 +286,7 @@ func (h *Hnsw) Link(first, second uint32, level int) {
 			resultSet := &distqueue.DistQueueClosestFirst{Size: len(node.friends[level])}
 
 			for _, n := range node.friends[level] {
-				resultSet.Push(n, h.DistFunc(node.p, h.nodes[n].p))
+				resultSet.Push(n, h.DistFunc(node.point, h.nodes[n].point))
 			}
 			h.getNeighborsByHeuristicClosestFirst(resultSet, maxL)
 
@@ -305,7 +318,7 @@ func (h *Hnsw) getNeighborsByHeuristicClosestLast(resultSet1 *distqueue.DistQueu
 		e := resultSet.Pop()
 		good := true
 		for _, r := range result {
-			if h.DistFunc(h.nodes[r.ID].p, h.nodes[e.ID].p) < e.D {
+			if h.DistFunc(h.nodes[r.ID].point, h.nodes[e.ID].point) < e.D {
 				good = false
 				break
 			}
@@ -337,7 +350,7 @@ func (h *Hnsw) getNeighborsByHeuristicClosestFirst(resultSet *distqueue.DistQueu
 		e := resultSet.Pop()
 		good := true
 		for _, r := range result {
-			if h.DistFunc(h.nodes[r.ID].p, h.nodes[e.ID].p) < e.D {
+			if h.DistFunc(h.nodes[r.ID].point, h.nodes[e.ID].point) < e.D {
 				good = false
 				break
 			}
@@ -358,7 +371,7 @@ func (h *Hnsw) getNeighborsByHeuristicClosestFirst(resultSet *distqueue.DistQueu
 	}
 }
 
-func New(M int, efConstruction int, first Point) *Hnsw {
+func New(M int, efConstruction int, first *mat.VecDense, metric string) (*Hnsw, error) {
 
 	h := Hnsw{}
 	h.M = M
@@ -370,13 +383,23 @@ func New(M int, efConstruction int, first Point) *Hnsw {
 
 	h.bitset = bitsetpool.New()
 
-	h.DistFunc = f32.L2Squared8AVX
-
+	switch metric {
+	case "cosine":
+		h.DistType = CosineDist
+		h.DistFunc = distances.Cosine
+	case "l2":
+		h.DistType = L2SquaredDist
+		h.DistFunc = distances.L2Squared
+	default:
+		return nil, errors.New(fmt.Sprintf("The metric %v is not implemented", metric))
+	}
+	
 	// add first point, it will be our enterpoint (index 0)
-	h.nodes = []node{node{level: 0, p: first}}
+	h.nodes = []node{node{level: 0, point: first}}
 
-	return &h
+	return &h,nil
 }
+
 
 func (h *Hnsw) Stats() string {
 	s := "HNSW Index\n"
@@ -398,7 +421,8 @@ func (h *Hnsw) Stats() string {
 				connsC[j]++
 			}
 		}
-		memoryUseData += h.nodes[i].p.Size()
+		pointMemSize := len(h.nodes[i].point.RawVector().Data) * 8 
+		memoryUseData += pointMemSize
 		memoryUseIndex += h.nodes[i].level*h.M*4 + h.M0*4
 	}
 	for i := range levCount {
@@ -420,7 +444,7 @@ func (h *Hnsw) Grow(size int) {
 
 }
 
-func (h *Hnsw) Add(q Point, id uint32) {
+func (h *Hnsw) Add(q *mat.VecDense, id uint32) {
 
 	if id == 0 {
 		panic("Id 0 is reserved, use ID:s starting from 1 when building index")
@@ -431,11 +455,11 @@ func (h *Hnsw) Add(q Point, id uint32) {
 
 	epID := h.enterpoint
 	currentMaxLayer := h.nodes[epID].level
-	ep := &distqueue.Item{ID: h.enterpoint, D: h.DistFunc(h.nodes[h.enterpoint].p, q)}
+	ep := &distqueue.Item{ID: h.enterpoint, D: h.DistFunc(h.nodes[h.enterpoint].point, q)}
 
 	// assume Grow has been called in advance
 	newID := id
-	newNode := node{p: q, level: curlevel, friends: make([][]uint32, min(curlevel, currentMaxLayer)+1)}
+	newNode := node{point: q, level: curlevel, friends: make([][]uint32, min(curlevel, currentMaxLayer)+1)}
 
 	// first pass, find another ep if curlevel < maxLayer
 	for level := currentMaxLayer; level > curlevel; level-- {
@@ -443,7 +467,7 @@ func (h *Hnsw) Add(q Point, id uint32) {
 		for changed {
 			changed = false
 			for _, i := range h.getFriends(ep.ID, level) {
-				d := h.DistFunc(h.nodes[i].p, q)
+				d := h.DistFunc(h.nodes[i].point, q)
 				if d < ep.D {
 					ep = &distqueue.Item{ID: i, D: d}
 					changed = true
@@ -499,15 +523,14 @@ func (h *Hnsw) Add(q Point, id uint32) {
 	h.Unlock()
 }
 
-func (h *Hnsw) searchAtLayer(q Point, resultSet *distqueue.DistQueueClosestLast, efConstruction int, ep *distqueue.Item, level int) {
+func (h *Hnsw) searchAtLayer(q *mat.VecDense, resultSet *distqueue.DistQueueClosestLast, efConstruction int, ep *distqueue.Item, level int) {
 
 	var pool, visited = h.bitset.Get()
-	//visited := make(map[uint32]bool)
 
 	candidates := &distqueue.DistQueueClosestFirst{Size: efConstruction * 3}
 
 	visited.Set(uint(ep.ID))
-	//visited[ep.ID] = true
+
 	candidates.Push(ep.ID, ep.D)
 
 	resultSet.Push(ep.ID, ep.D)
@@ -526,7 +549,7 @@ func (h *Hnsw) searchAtLayer(q Point, resultSet *distqueue.DistQueueClosestLast,
 			for _, n := range friends {
 				if !visited.Test(uint(n)) {
 					visited.Set(uint(n))
-					d := h.DistFunc(q, h.nodes[n].p)
+					d := h.DistFunc(q, h.nodes[n].point)
 					_, topD := resultSet.Top()
 					if resultSet.Len() < efConstruction {
 						item := resultSet.Push(n, d)
@@ -544,10 +567,10 @@ func (h *Hnsw) searchAtLayer(q Point, resultSet *distqueue.DistQueueClosestLast,
 }
 
 // SearchBrute returns the true K nearest neigbours to search point q
-func (h *Hnsw) SearchBrute(q Point, K int) *distqueue.DistQueueClosestLast {
+func (h *Hnsw) SearchBrute(q *mat.VecDense, K int) *distqueue.DistQueueClosestLast {
 	resultSet := &distqueue.DistQueueClosestLast{Size: K}
 	for i := 1; i < len(h.nodes); i++ {
-		d := h.DistFunc(h.nodes[i].p, q)
+		d := h.DistFunc(h.nodes[i].point, q)
 		if resultSet.Len() < K {
 			resultSet.Push(uint32(i), d)
 			continue
@@ -562,7 +585,7 @@ func (h *Hnsw) SearchBrute(q Point, K int) *distqueue.DistQueueClosestLast {
 }
 
 // Benchmark test precision by comparing the results of SearchBrute and Search
-func (h *Hnsw) Benchmark(q Point, ef int, K int) float64 {
+func (h *Hnsw) Benchmark(q *mat.VecDense, ef int, K int) float64 {
 	result := h.Search(q, ef, K)
 	groundTruth := h.SearchBrute(q, K)
 	truth := make([]uint32, 0)
@@ -581,11 +604,11 @@ func (h *Hnsw) Benchmark(q Point, ef int, K int) float64 {
 	return float64(p) / float64(K)
 }
 
-func (h *Hnsw) Search(q Point, ef int, K int) *distqueue.DistQueueClosestLast {
+func (h *Hnsw) Search(q *mat.VecDense, ef int, K int) *distqueue.DistQueueClosestLast {
 
 	h.RLock()
 	currentMaxLayer := h.maxLayer
-	ep := &distqueue.Item{ID: h.enterpoint, D: h.DistFunc(h.nodes[h.enterpoint].p, q)}
+	ep := &distqueue.Item{ID: h.enterpoint, D: h.DistFunc(h.nodes[h.enterpoint].point, q)}
 	h.RUnlock()
 
 	resultSet := &distqueue.DistQueueClosestLast{Size: ef + 1}
@@ -595,7 +618,7 @@ func (h *Hnsw) Search(q Point, ef int, K int) *distqueue.DistQueueClosestLast {
 		for changed {
 			changed = false
 			for _, i := range h.getFriends(ep.ID, level) {
-				d := h.DistFunc(h.nodes[i].p, q)
+				d := h.DistFunc(h.nodes[i].point, q)
 				if d < ep.D {
 					ep.ID, ep.D = i, d
 					changed = true
