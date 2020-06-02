@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 	"errors"
-	"go-hnsw/bitsetpool"
-	"go-hnsw/distqueue"
-	"go-hnsw/distances"
+	"github.com/tavoaqp/go-hnsw/bitsetpool"
+	"github.com/tavoaqp/go-hnsw/distqueue"
+	"github.com/tavoaqp/go-hnsw/distances"
 	"gonum.org/v1/gonum/mat"
 )
 
