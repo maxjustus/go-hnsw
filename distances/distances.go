@@ -3,11 +3,12 @@ package distances
 import (
 	"gonum.org/v1/gonum/mat"
 	"gonum.org/v1/gonum/blas/blas64"
+	"math"
 )
 
 func Cosine(vec1 *mat.VecDense, vec2 *mat.VecDense) float64 {
-	vec1Norm := mat.Dot(vec1, vec1)
-	vec2Norm := mat.Dot(vec2, vec2)
+	vec1Norm := math.Sqrt(mat.Dot(vec1, vec1))
+	vec2Norm := math.Sqrt(mat.Dot(vec2, vec2))
 	vecMul := mat.Dot(vec1, vec2)
 	return 1 - vecMul/(vec1Norm * vec2Norm)
 }
