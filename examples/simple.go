@@ -18,7 +18,6 @@ func main() {
 		K              = 10
 	)
 
-	//var zero hnsw.Point = make([]float32, 128)
 	zero := mat.NewVecDense(128, nil)
 	
 	h, err := hnsw.New(M, efConstruction, zero, "l2")
