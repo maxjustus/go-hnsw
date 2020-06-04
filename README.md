@@ -6,6 +6,7 @@ NOTE: This version extends over the original one on the following:
  - Uses gonum/mat dense vectors to represent elements in the tree. No longer support for float32.
  - Also uses gonum BLAS functions. Available functions are Cosine and L2Squared
  - The HNSW object now support both Cosine and L2Squared metrics.
+ - This code is NOT production ready!
  
 ## Usage
 
