@@ -3,6 +3,7 @@ package hnsw
 import (
 	"compress/gzip"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -10,15 +11,15 @@ import (
 	"os"
 	"sync"
 	"time"
-	"errors"
-	"github.com/tavoaqp/go-hnsw/bitsetpool"
-	"github.com/tavoaqp/go-hnsw/distqueue"
-	"github.com/tavoaqp/go-hnsw/distances"
+
+	"github.com/maxjustus/go-hnsw/bitsetpool"
+	"github.com/maxjustus/go-hnsw/distances"
+	"github.com/maxjustus/go-hnsw/distqueue"
 	"gonum.org/v1/gonum/mat"
 )
 
-const(
-	CosineDist = 1
+const (
+	CosineDist    = 1
 	L2SquaredDist = 2
 )
 
@@ -40,7 +41,7 @@ type Hnsw struct {
 
 	DistFunc func(*mat.VecDense, *mat.VecDense) float64
 	DistType int
-	
+
 	nodes []node
 
 	bitset *bitsetpool.BitsetPool
@@ -89,14 +90,14 @@ func Load(filename string) (*Hnsw, int64, error) {
 	for i := range h.nodes {
 
 		var newVec mat.VecDense
-		_ , err := newVec.UnmarshalBinaryFrom(reader)
+		_, err := newVec.UnmarshalBinaryFrom(reader)
 
-		if (err!=nil) {
+		if err != nil {
 			panic(err)
 		}
-		
+
 		h.nodes[i].point = &newVec
-		
+
 		h.nodes[i].level = readInt32(reader)
 
 		numFriends := readInt32(reader)
@@ -140,7 +141,7 @@ func (h *Hnsw) Save(filename string) error {
 	writeInt32(h.maxLayer, writer)
 	writeInt32(int(h.enterpoint), writer)
 	writeInt32(h.DistType, writer)
-	
+
 	lenNodes := len(h.nodes)
 	writeInt32(lenNodes, writer)
 
@@ -150,9 +151,9 @@ func (h *Hnsw) Save(filename string) error {
 	for _, n := range h.nodes {
 
 		//writeInt32(n.point.Len(), writer)
-			
-		_ , err = n.point.MarshalBinaryTo(writer)
-		
+
+		_, err = n.point.MarshalBinaryTo(writer)
+
 		if err != nil {
 			panic(err)
 		}
@@ -393,13 +394,12 @@ func New(M int, efConstruction int, first *mat.VecDense, metric string) (*Hnsw, 
 	default:
 		return nil, errors.New(fmt.Sprintf("The metric %v is not implemented", metric))
 	}
-	
+
 	// add first point, it will be our enterpoint (index 0)
 	h.nodes = []node{node{level: 0, point: first}}
 
-	return &h,nil
+	return &h, nil
 }
-
 
 func (h *Hnsw) Stats() string {
 	s := "HNSW Index\n"
@@ -421,7 +421,7 @@ func (h *Hnsw) Stats() string {
 				connsC[j]++
 			}
 		}
-		pointMemSize := len(h.nodes[i].point.RawVector().Data) * 8 
+		pointMemSize := len(h.nodes[i].point.RawVector().Data) * 8
 		memoryUseData += pointMemSize
 		memoryUseIndex += h.nodes[i].level*h.M*4 + h.M0*4
 	}

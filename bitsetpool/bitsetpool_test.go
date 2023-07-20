@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/willf/bitset"
+	"github.com/bits-and-blooms/bitset"
 )
 
 func TestBitset(t *testing.T) {

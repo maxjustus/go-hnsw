@@ -3,7 +3,7 @@ package bitsetpool
 import (
 	"sync"
 
-	"github.com/willf/bitset"
+	"github.com/bits-and-blooms/bitset"
 )
 
 type poolItem struct {
