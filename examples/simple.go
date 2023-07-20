@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"time"
 
-	hnsw "go-hnsw"
+	hnsw "github.com/maxjustus/go-hnsw"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -19,13 +19,13 @@ func main() {
 	)
 
 	zero := mat.NewVecDense(128, nil)
-	
+
 	h, err := hnsw.New(M, efConstruction, zero, "l2")
 
-	if (err!=nil) {
+	if err != nil {
 		panic(err)
 	}
-	
+
 	h.Grow(10000)
 
 	for i := 1; i <= 10000; i++ {
