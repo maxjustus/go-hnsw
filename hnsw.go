@@ -267,24 +267,26 @@ func (h *Hnsw) Link(first, second uint32, level int) {
 
 		switch h.DelaunayType {
 		case 0:
-			resultSet := &distqueue.DistQueueClosestLast{Size: len(node.friends[level])}
+			resultSet := distqueue.NewClosestLastQueue()
 
 			for _, n := range node.friends[level] {
 				resultSet.Push(n, h.DistFunc(node.point, h.nodes[n].point))
 			}
-			for resultSet.Len() > maxL {
+			for resultSet.Size() > maxL {
 				resultSet.Pop()
 			}
 			// FRIENDS ARE STORED IN DISTANCE ORDER, closest at index 0
 			node.friends[level] = node.friends[level][0:maxL]
 			for i := maxL - 1; i >= 0; i-- {
-				item := resultSet.Pop()
-				node.friends[level][i] = item.ID
+				item, exists := resultSet.Pop()
+				if exists {
+					node.friends[level][i] = item.ID
+				}
 			}
 
 		case 1:
 
-			resultSet := &distqueue.DistQueueClosestFirst{Size: len(node.friends[level])}
+			resultSet := distqueue.NewClosestFirstQueue()
 
 			for _, n := range node.friends[level] {
 				resultSet.Push(n, h.DistFunc(node.point, h.nodes[n].point))
@@ -294,81 +296,100 @@ func (h *Hnsw) Link(first, second uint32, level int) {
 			// FRIENDS ARE STORED IN DISTANCE ORDER, closest at index 0
 			node.friends[level] = node.friends[level][0:maxL]
 			for i := 0; i < maxL; i++ {
-				item := resultSet.Pop()
-				node.friends[level][i] = item.ID
+				item, exists := resultSet.Pop()
+				if exists {
+					node.friends[level][i] = item.ID
+				}
 			}
 		}
 	}
 	node.Unlock()
 }
 
-func (h *Hnsw) getNeighborsByHeuristicClosestLast(resultSet1 *distqueue.DistQueueClosestLast, M int) {
-	if resultSet1.Len() <= M {
+func (h *Hnsw) getNeighborsByHeuristicClosestLast(resultSet1 distqueue.ItemQueue, M int) {
+	if resultSet1.Size() <= M {
 		return
 	}
-	resultSet := &distqueue.DistQueueClosestFirst{Size: resultSet1.Len()}
-	tempList := &distqueue.DistQueueClosestFirst{Size: resultSet1.Len()}
+
+	resultSet := distqueue.NewClosestFirstQueue()
+	tempList := distqueue.NewClosestLastQueue()
 	result := make([]*distqueue.Item, 0, M)
-	for resultSet1.Len() > 0 {
-		resultSet.PushItem(resultSet1.Pop())
+	for resultSet1.Size() > 0 {
+		item, exists := resultSet1.Pop()
+		if exists {
+			resultSet.PushItem(item)
+		}
 	}
-	for resultSet.Len() > 0 {
-		if len(result) >= M {
+	for resultSet.Size() > 0 {
+		e, exists := resultSet.Pop()
+		if !exists {
 			break
 		}
-		e := resultSet.Pop()
+
 		good := true
+
 		for _, r := range result {
-			if h.DistFunc(h.nodes[r.ID].point, h.nodes[e.ID].point) < e.D {
+			if h.DistFunc(h.nodes[r.ID].point, h.nodes[e.ID].point) < e.Distance {
 				good = false
 				break
 			}
 		}
+
 		if good {
-			result = append(result, e)
+			result = append(result, &e)
 		} else {
 			tempList.PushItem(e)
 		}
 	}
-	for len(result) < M && tempList.Len() > 0 {
-		result = append(result, tempList.Pop())
+	for len(result) < M && tempList.Size() > 0 {
+		item, exists := tempList.Pop()
+		if exists {
+			result = append(result, &item)
+		}
 	}
+
 	for _, item := range result {
-		resultSet1.PushItem(item)
+		resultSet1.PushItem(*item)
 	}
 }
 
-func (h *Hnsw) getNeighborsByHeuristicClosestFirst(resultSet *distqueue.DistQueueClosestFirst, M int) {
-	if resultSet.Len() <= M {
+func (h *Hnsw) getNeighborsByHeuristicClosestFirst(resultSet distqueue.ItemQueue, M int) {
+	if resultSet.Size() <= M {
 		return
 	}
-	tempList := &distqueue.DistQueueClosestFirst{Size: resultSet.Len()}
+
+	tempList := distqueue.NewClosestFirstQueue()
 	result := make([]*distqueue.Item, 0, M)
-	for resultSet.Len() > 0 {
-		if len(result) >= M {
+	for resultSet.Size() > 0 {
+		e, exists := resultSet.Pop()
+		if !exists {
 			break
 		}
-		e := resultSet.Pop()
+
 		good := true
 		for _, r := range result {
-			if h.DistFunc(h.nodes[r.ID].point, h.nodes[e.ID].point) < e.D {
+			if h.DistFunc(h.nodes[r.ID].point, h.nodes[e.ID].point) < e.Distance {
 				good = false
 				break
 			}
 		}
 		if good {
-			result = append(result, e)
+			result = append(result, &e)
 		} else {
 			tempList.PushItem(e)
 		}
 	}
-	for len(result) < M && tempList.Len() > 0 {
-		result = append(result, tempList.Pop())
+	for len(result) < M && tempList.Size() > 0 {
+		item, exists := tempList.Pop()
+		if exists {
+			result = append(result, &item)
+		}
 	}
-	resultSet.Reset()
+
+	resultSet.Clear()
 
 	for _, item := range result {
-		resultSet.PushItem(item)
+		resultSet.PushItem(*item)
 	}
 }
 
@@ -455,7 +476,7 @@ func (h *Hnsw) Add(q *mat.VecDense, id uint32) {
 
 	epID := h.enterpoint
 	currentMaxLayer := h.nodes[epID].level
-	ep := &distqueue.Item{ID: h.enterpoint, D: h.DistFunc(h.nodes[h.enterpoint].point, q)}
+	ep := &distqueue.Item{ID: h.enterpoint, Distance: h.DistFunc(h.nodes[h.enterpoint].point, q)}
 
 	// assume Grow has been called in advance
 	newID := id
@@ -468,8 +489,8 @@ func (h *Hnsw) Add(q *mat.VecDense, id uint32) {
 			changed = false
 			for _, i := range h.getFriends(ep.ID, level) {
 				d := h.DistFunc(h.nodes[i].point, q)
-				if d < ep.D {
-					ep = &distqueue.Item{ID: i, D: d}
+				if d < ep.Distance {
+					ep = &distqueue.Item{ID: i, Distance: d}
 					changed = true
 				}
 			}
@@ -481,22 +502,25 @@ func (h *Hnsw) Add(q *mat.VecDense, id uint32) {
 	// create new connections in every layer
 	for level := min(curlevel, currentMaxLayer); level >= 0; level-- {
 
-		resultSet := &distqueue.DistQueueClosestLast{}
+		resultSet := distqueue.NewClosestLastQueue()
 		h.searchAtLayer(q, resultSet, h.efConstruction, ep, level)
 		switch h.DelaunayType {
 		case 0:
 			// shrink resultSet to M closest elements (the simple heuristic)
-			for resultSet.Len() > h.M {
+			for resultSet.Size() > h.M {
 				resultSet.Pop()
 			}
 		case 1:
 			h.getNeighborsByHeuristicClosestLast(resultSet, h.M)
 		}
-		newNode.friends[level] = make([]uint32, resultSet.Len())
-		for i := resultSet.Len() - 1; i >= 0; i-- {
-			item := resultSet.Pop()
-			// store in order, closest at index 0
-			newNode.friends[level][i] = item.ID
+		newNode.friends[level] = make([]uint32, resultSet.Size())
+		for i := resultSet.Size() - 1; i >= 0; i-- {
+			item, exists := resultSet.Pop()
+
+			if exists {
+				// store in order, closest at index 0
+				newNode.friends[level][i] = item.ID
+			}
 		}
 	}
 
@@ -523,23 +547,26 @@ func (h *Hnsw) Add(q *mat.VecDense, id uint32) {
 	h.Unlock()
 }
 
-func (h *Hnsw) searchAtLayer(q *mat.VecDense, resultSet *distqueue.DistQueueClosestLast, efConstruction int, ep *distqueue.Item, level int) {
+func (h *Hnsw) searchAtLayer(q *mat.VecDense, resultSet distqueue.ItemQueue, efConstruction int, ep *distqueue.Item, level int) {
 
 	var pool, visited = h.bitset.Get()
 
-	candidates := &distqueue.DistQueueClosestFirst{Size: efConstruction * 3}
+	candidates := distqueue.NewClosestFirstQueue()
 
 	visited.Set(uint(ep.ID))
 
-	candidates.Push(ep.ID, ep.D)
+	candidates.Push(ep.ID, ep.Distance)
 
-	resultSet.Push(ep.ID, ep.D)
+	resultSet.Push(ep.ID, ep.Distance)
 
-	for candidates.Len() > 0 {
-		_, lowerBound := resultSet.Top() // worst distance so far
-		c := candidates.Pop()
+	for candidates.Size() > 0 {
+		worstMatch, exists := resultSet.Peek() // worst distance so far
+		if !exists {
+			break
+		}
+		c, exists := candidates.Pop()
 
-		if c.D > lowerBound {
+		if !exists || c.Distance > worstMatch.Distance {
 			// since candidates is sorted, it wont get any better...
 			break
 		}
@@ -550,14 +577,20 @@ func (h *Hnsw) searchAtLayer(q *mat.VecDense, resultSet *distqueue.DistQueueClos
 				if !visited.Test(uint(n)) {
 					visited.Set(uint(n))
 					d := h.DistFunc(q, h.nodes[n].point)
-					_, topD := resultSet.Top()
-					if resultSet.Len() < efConstruction {
+					topMatch, exists := resultSet.Peek()
+					if !exists {
+						break
+					}
+
+					if resultSet.Size() < efConstruction {
 						item := resultSet.Push(n, d)
 						candidates.PushItem(item)
-					} else if topD > d {
+					} else if topMatch.Distance > d {
 						// keep length of resultSet to max efConstruction
-						item := resultSet.PopAndPush(n, d)
-						candidates.PushItem(item)
+						item, exists := resultSet.PopAndPush(n, d)
+						if exists {
+							candidates.PushItem(item)
+						}
 					}
 				}
 			}
@@ -567,16 +600,16 @@ func (h *Hnsw) searchAtLayer(q *mat.VecDense, resultSet *distqueue.DistQueueClos
 }
 
 // SearchBrute returns the true K nearest neigbours to search point q
-func (h *Hnsw) SearchBrute(q *mat.VecDense, K int) *distqueue.DistQueueClosestLast {
-	resultSet := &distqueue.DistQueueClosestLast{Size: K}
+func (h *Hnsw) SearchBrute(q *mat.VecDense, K int) distqueue.ItemQueue {
+	resultSet := distqueue.NewClosestLastQueue()
 	for i := 1; i < len(h.nodes); i++ {
 		d := h.DistFunc(h.nodes[i].point, q)
-		if resultSet.Len() < K {
+		if resultSet.Size() < K {
 			resultSet.Push(uint32(i), d)
 			continue
 		}
-		_, topD := resultSet.Head()
-		if d < topD {
+		topItem, exists := resultSet.Peek()
+		if exists && d < topItem.Distance {
 			resultSet.PopAndPush(uint32(i), d)
 			continue
 		}
@@ -589,29 +622,34 @@ func (h *Hnsw) Benchmark(q *mat.VecDense, ef int, K int) float64 {
 	result := h.Search(q, ef, K)
 	groundTruth := h.SearchBrute(q, K)
 	truth := make([]uint32, 0)
-	for groundTruth.Len() > 0 {
-		truth = append(truth, groundTruth.Pop().ID)
+	for groundTruth.Size() > 0 {
+		item, exists := groundTruth.Pop()
+		if exists {
+			truth = append(truth, item.ID)
+		}
 	}
 	p := 0
-	for result.Len() > 0 {
-		i := result.Pop()
-		for j := 0; j < K; j++ {
-			if truth[j] == i.ID {
-				p++
+	for result.Size() > 0 {
+		i, exists := result.Pop()
+		if exists {
+			for j := 0; j < K; j++ {
+				if truth[j] == i.ID {
+					p++
+				}
 			}
 		}
 	}
 	return float64(p) / float64(K)
 }
 
-func (h *Hnsw) Search(q *mat.VecDense, ef int, K int) *distqueue.DistQueueClosestLast {
+func (h *Hnsw) Search(q *mat.VecDense, ef int, K int) distqueue.ItemQueue {
 
 	h.RLock()
 	currentMaxLayer := h.maxLayer
-	ep := &distqueue.Item{ID: h.enterpoint, D: h.DistFunc(h.nodes[h.enterpoint].point, q)}
+	ep := &distqueue.Item{ID: h.enterpoint, Distance: h.DistFunc(h.nodes[h.enterpoint].point, q)}
 	h.RUnlock()
 
-	resultSet := &distqueue.DistQueueClosestLast{Size: ef + 1}
+	resultSet := distqueue.NewClosestLastQueue()
 	// first pass, find best ep
 	for level := currentMaxLayer; level > 0; level-- {
 		changed := true
@@ -619,8 +657,8 @@ func (h *Hnsw) Search(q *mat.VecDense, ef int, K int) *distqueue.DistQueueCloses
 			changed = false
 			for _, i := range h.getFriends(ep.ID, level) {
 				d := h.DistFunc(h.nodes[i].point, q)
-				if d < ep.D {
-					ep.ID, ep.D = i, d
+				if d < ep.Distance {
+					ep.ID, ep.Distance = i, d
 					changed = true
 				}
 			}
@@ -628,7 +666,7 @@ func (h *Hnsw) Search(q *mat.VecDense, ef int, K int) *distqueue.DistQueueCloses
 	}
 	h.searchAtLayer(q, resultSet, ef, ep, 0)
 
-	for resultSet.Len() > K {
+	for resultSet.Size() > K {
 		resultSet.Pop()
 	}
 	return resultSet

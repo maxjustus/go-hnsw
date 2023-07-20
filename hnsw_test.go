@@ -10,8 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"gonum.org/v1/gonum/mat"
+
 	"github.com/stretchr/testify/assert"
+	"gonum.org/v1/gonum/mat"
 )
 
 var prefix = "siftsmall/siftsmall"
@@ -52,7 +53,7 @@ func TestSIFT(t *testing.T) {
 func buildIndex() *Hnsw {
 	// BUILD INDEX
 	point := mat.NewVecDense(128, make([]float64, 128))
-	h,_ := New(4, 200, point, "l2")
+	h, _ := New(4, 200, point, "l2")
 	h.DelaunayType = 1
 	h.Grow(dataSize)
 
@@ -121,10 +122,10 @@ func search(h *Hnsw, queries []*mat.VecDense, truth [][]uint32, efSearch int) fl
 			for j := range queries {
 				results := h.Search(queries[j], efSearch, 10)
 				// calc 10-NN precision
-				for results.Len() > 10 {
+				for results.Size() > 10 {
 					results.Pop()
 				}
-				for _, item := range results.Items() {
+				for _, item := range results.Values() {
 					for k := 0; k < 10; k++ {
 						// !!! Our index numbers starts from 1
 						if int32(truth[j][k]) == int32(item.ID)-1 {
@@ -172,7 +173,7 @@ func loadQueriesFromFvec(prefix string) (queries []*mat.VecDense, truth [][]uint
 		vecDense := mat.NewVecDense(128, make([]float64, 128))
 		queries[qcount] = vecDense
 		for i := 0; i < int(d); i++ {
-			newFloat,_ := testReadFloat64(f2)
+			newFloat, _ := testReadFloat64(f2)
 			queries[qcount].SetVec(i, newFloat)
 		}
 		qcount++
@@ -229,7 +230,7 @@ func loadDataFromFvec(prefix string, points chan job) {
 		}
 		vec := mat.NewVecDense(128, make([]float64, 128))
 		for i := 0; i < int(d); i++ {
-			readValue, _ := testReadFloat64(f) 
+			readValue, _ := testReadFloat64(f)
 			vec.SetVec(i, readValue)
 		}
 		points <- job{p: vec, id: uint32(count)}
